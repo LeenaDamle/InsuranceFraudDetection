@@ -1,0 +1,244 @@
+---
+title: "Predicting Insurance Fraud"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+```{r,eval=FALSE}
+
+claims<-read.csv("D:\\CSUEB_MSBA\\Capstone\\claims.csv")
+```
+```{r,eval=FALSE}
+dim(claims)
+summary(claims)
+
+```
+```{r,eval=FALSE}
+#convert numeric to factors
+claims$Year <- as.factor(claims$Year)
+claims$RepNumber <- as.factor(claims$RepNumber)
+claims$WeekOfMonth <- as.factor(claims$WeekOfMonth)
+claims$WeekOfMonthClaimed <- as.factor(claims$WeekOfMonthClaimed)
+claims$FraudFound_P <- as.factor(claims$FraudFound_P)
+
+summary(claims$AgeOfPolicyHolder[which(claims$Age == 0)])
+#Since Age and AgeOfPolicyHolder variables both are the same and as Age variable has missing data, we will drop it. Moreover, variable AgeOfPolicyHolder is already divided into bins
+claims <-claims[-11]
+```
+
+
+##check if there are any missing values in the dataset
+```{r,eval=FALSE}
+sum(is.na(claims))
+```
+## no missing values found
+```{r,eval=FALSE}
+
+#Policy number will also cause over-fitting, hence remove it
+
+claims<-claims[,-c(16)]
+```
+```{r,eval=FALSE}
+claims$FraudFound_P <-as.factor(claims$FraudFound_P)#encode as factor
+table(claims$FraudFound_P)#see distribution of Response variable- Fraud_Found_P
+contrasts(claims$FraudFound_P) #see how factor is encoded
+
+count <- table(claims$FraudFound_P) 
+prop <- round(count/length(claims$FraudFound_P),2)
+b <- plot(claims$FraudFound_P, xlab='Fraud', ylab='No of Claims', main='Percentage Frauds', legend = rownames(count),beside=TRUE, col=c("green","red")) 
+text(b, count, prop, pos=1) 
+
+```
+##923 frauds were found out of 15420 samples
+## 94% claims were not fraudulent
+##Data is highly imbalanced
+
+
+#Exploratory ANalysis
+
+```{r,eval=FALSE}
+b <- plot(claims$Sex,claims$FraudFound_P , ylab='Fraud Found', xlab='Sex', main='Percentage Frauds by Gender', col=c("green","red")) 
+
+counts <- table(claims$FraudFound_P,claims$Sex)
+barplot(counts, main="Fraud Distribution by Gender",
+  ylab="Fraud Found", xlab= "Gender",
+  legend = rownames(counts),beside=TRUE, col=c("green","red"))
+text(b, counts, prop, pos=1) 
+```
+```{r,eval=FALSE}
+#b <- plot(claims$WitnessPresent ~claims$FraudFound_P , xlab='Fraud Found', ylab='Witness Present', main='Distribution of Frauds')
+
+b <- plot(claims$WitnessPresent,claims$FraudFound_P , ylab='Fraud Found', xlab='WitnessPresent', main='Percentage Frauds by WitnessPresent', col=c("green","red")) 
+
+counts <- table(claims$FraudFound_P,claims$WitnessPresent)
+barplot(counts, main="Fraud Distribution by WitnessPresent",
+  ylab="Fraud Found", xlab= "WitnessPresent",
+  legend = rownames(counts),beside=TRUE, col=c("green","red"))
+text(b, counts, prop, pos=1) 
+
+```
+
+```{r,eval=FALSE}
+#extract numeric variables
+claims_num <-claims[,sapply(claims,is.numeric)]
+#claims_num <-claims[,colnames]
+```
+
+
+```{r,eval=FALSE}
+#see correlation between the numeric predictors
+library(corrplot)
+correlations <- cor(claims_num)
+corrplot(correlations, method="circle")
+# We do not get any additional insights from the two numeric variables
+```
+
+
+```{r,eval=FALSE}
+#pairs(claims_num, claims$FraudFound_P)
+```
+```{r,eval=FALSE}
+# Stacked Bar Plot with Colors and Legend
+counts <- table(claims$RepNumber, claims$FraudFound_P)
+barplot(counts, main="Fraud Distribution by Rep Number",
+  xlab="Fraud Found by Rep Number", ylab= "Number of Claims",
+  legend = rownames(counts),beside=TRUE)
+
+plot(claims$RepNumber, claims$FraudFound_P, main= "Percent fraudulent claims by Rep Number", ylab="Fraud Found", xlab= "Rep Number",col=c("green","red"))
+```
+
+```{r,eval=FALSE}
+set.seed(123)
+#split into training (65%) and test(35%) data by random partitioning
+x <- claims[, -15]
+y <- claims$FraudFound_P
+n <- nrow(x)
+
+train <- sample(1:n, floor(0.65 * n))
+
+y_test <- y[-train]
+y_train <- y[train]
+x_test <- x[-train, ]
+x_train <- x[train, ]
+
+```
+
+##Multiple logistic regression model
+
+```{r,eval=FALSE}
+glm_full <- glm(y_train ~ ., data=x_train, family=binomial,maxit = 100)
+summary(glm_full)
+
+```
+##making predictions and evaluating accuracy of full model
+```{r,eval=FALSE}
+glm_full_pred <- predict(glm_full, newdata = x_test, type="response")
+glm_full_pred <-ifelse(glm_full_pred >=0.5,1,0)
+
+library(caret)
+glm_full_pred <- as.factor(glm_full_pred)
+confusionMatrix(data=glm_full_pred, y_test)
+```
+
+
+##Evaluating full model performace using AUC
+```{r,eval=FALSE}
+library(ROCR)
+p <- predict(glm_full, newdata=x_test, type="response")
+pr2 <- prediction(p, y_test)
+prf2 <- performance(pr2, measure = "tpr", x.measure = "fpr")
+plot(prf2)
+auc1 <- performance(pr2, measure = "auc")
+auc1 <- auc1@y.values[[1]]
+print(auc1)
+```
+# Basic Random forest model
+```{r,eval=FALSE}
+library(randomForest)
+table(claims$FraudFound_P)
+set.seed(999)
+
+rf1 <- randomForest(FraudFound_P ~ ., data=claims,importance = TRUE, ntree=1000, subset=train)
+rf1
+varImpPlot(rf1, type=1)
+plot(c(1:1000), rf1$err.rate[,1], type='l')
+
+rf1_pred <- predict(rf1, newdata = claims[-train, ])
+
+```
+# RF model accuracy for test set
+```{r,eval=FALSE}
+confusionMatrix(data=rf1_pred, y_test)
+```
+```{r,eval=FALSE}#
+#claims$FraudFound_P <- as.factor(claims$FraudFound_P)
+library(caret)
+#data(GermanCredit)
+Train <- createDataPartition(claims$FraudFound_P, p=0.6, list=FALSE)
+training <- claims[ Train, ]
+testing <- claims[ -Train, ]
+```
+#Logistic Regresion with 10 fold cross validation
+```{r,eval=FALSE}
+
+library(caret)
+# Define training control
+set.seed(123)
+train.control <- trainControl(method = "repeatedcv", 
+                              number = 10, repeats = 1)
+# Train the model
+model <- train(FraudFound_P ~., data = claims, method="glm", family="binomial",
+               trControl = train.control)
+# Summarize the results
+print(model)
+
+```
+```{r,eval=FALSE}
+pred = predict(model, newdata=x_test)
+confusionMatrix(data=pred, y_test)
+```
+
+#Logistic Regresion with 10 fold cross validation and upsampling
+```{r,eval=FALSE}
+
+# Define training control for upsampling
+set.seed(123)
+train.control2 <- trainControl(method = "repeatedcv", 
+                              number = 10, repeats = 1, sampling = "up")
+# Train the model
+model2 <- train(FraudFound_P ~., data = claims, method="glm", family="binomial",
+               trControl = train.control2)
+# Summarize the results
+print(model2)
+
+```
+```{r,eval=FALSE}
+pred = predict(model2, newdata=x_test)
+confusionMatrix(data=pred, y_test)
+```
+
+
+#Random Forest with 5 fold cross validation and upsampling
+```{r,eval=FALSE}
+set.seed(123)
+train.control3 <- trainControl(method = "repeatedcv", 
+                              number = 5, repeats = 1, sampling = "up")
+mtry <- sqrt(ncol(claims))
+#tunegrid <- expand.grid(.mtry=mtry)
+rf_default <- train(FraudFound_P~., 
+                      data=claims, 
+                      method='rf', 
+                      #metric='Accuracy', 
+                      #tuneGrid=tunegrid,
+                      ntree=10 ,
+                      trControl=train.control3)
+print(rf_default)
+```
+
+
+```{r,eval=FALSE}
+pred = predict(rf_default, newdata=x_test)
+confusionMatrix(data=pred, y_test)
+```
+
